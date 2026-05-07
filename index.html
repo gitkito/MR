@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>心的回転課題 (Mental Rotation)</title>
+
+  <script src="https://unpkg.com/jspsych@8.0.0"></script>
+  <script src="https://unpkg.com/@jspsych/plugin-html-keyboard-response@2.0.0"></script>
+  <script src="https://unpkg.com/@jspsych/plugin-fullscreen@2.0.0"></script>
+  <link href="https://unpkg.com/jspsych@8.0.0/css/jspsych.css" rel="stylesheet" type="text/css" />
+
+  <style>
+    /* 刺激サイズはキャリブレーション後に JS から書き換えられる */
+    :root {
+      --stim-char-size: 73px;
+      --stim-gap: 53px;
+      --stim-font: 60px;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #000000;
+      color: #FFFFFF;
+      font-family: "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+      overflow: hidden;
+    }
+    /* jsPsych の表示領域全体を真っ黒で埋め、中央寄せにする */
+    .jspsych-display-element {
+      width: 100vw;
+      height: 100vh;
+      background-color: #000000;
+      color: #FFFFFF;
+    }
+    .jspsych-content-wrapper {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .jspsych-content {
+      color: #FFFFFF;
+      max-width: 900px;
+      font-size: 20px;
+      line-height: 1.7;
+      text-align: center;
+      margin: 0 auto;
+    }
+    /* fullscreen プラグインのボタン色をダークモードで調整 */
+    .jspsych-btn {
+      background-color: #222;
+      color: #FFFFFF;
+      border: 1px solid #666;
+      padding: 10px 22px;
+      font-size: 18px;
+      cursor: pointer;
+    }
+    .jspsych-btn:hover {
+      background-color: #333;
+    }
+    .stim-pair {
+      display: flex;
+      gap: var(--stim-gap);
+      justify-content: center;
+      align-items: center;
+    }
+    /* 文字をひとつあたり固定の正方形ボックスに収め、rotate しても
+       レイアウトが揺れないようにする。サイズは CSS 変数で制御。 */
+    .stim-char {
+      width: var(--stim-char-size);
+      height: var(--stim-char-size);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "MS Gothic", "ＭＳ ゴシック",
+                   "Yu Gothic", "Meiryo",
+                   "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+      font-size: var(--stim-font);
+      line-height: 1;
+      color: #FFFFFF;
+      user-select: none;
+      will-change: transform;
+    }
+    /* 較正用カード（クレジットカードと同じアスペクト比）。
+       1 px のヘアラインで描画し、参加者が「線の外側」に合わせる前提で
+       width = 外周 px ≒ カード幅とする。 */
+    #calib-card {
+      box-sizing: border-box;
+      border: 1px solid #FFFFFF;
+      background: rgba(255,255,255,0.06);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #888;
+      font-size: 14px;
+      margin: 24px auto;
+    }
+    .fixation {
+      font-size: 64px;
+      color: #FFFFFF;
+      text-align: center;
+    }
+    .instructions {
+      text-align: left;
+      max-width: 760px;
+      margin: 0 auto;
+    }
+    .instructions h2 {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .instructions ul {
+      padding-left: 1.4em;
+    }
+    kbd {
+      background: #222;
+      border: 1px solid #555;
+      padding: 2px 10px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 18px;
+      color: #FFF;
+    }
+    .center-msg {
+      text-align: center;
+      margin-top: 28px;
+      color: #BBB;
+    }
+  </style>
+</head>
+<body></body>
+
+<script>
+/* ---------- 参加者ID（jsPsych トライアルで入力） ---------- */
+let participantId = 'anonymous';
+
+/* ---------- jsPsych 初期化 ---------- */
+const jsPsych = initJsPsych({
+  display_element: document.body,
+  on_finish: function() {
+    saveDataAsCSV();
+  }
+});
+
+/* ---------- 定数 ---------- */
+const CHARS = ['え', 'き', 'す', 'そ', 'と', 'ぬ', 'み', 'も', 'よ', 'る'];
+const ANGLES = [0, 60, 120, 180, 240, 300];
+const PRACTICE_CHAR = 'は';
+
+const FIX_DURATION  = 500;
+const STIM_DURATION = 2000;
+const POST_BLANK    = 1500; // 試行間 = STIM終了後ブランク(1500) + 次のFixation(500) = 2000ms
+
+/* ---------- 視角設定とキャリブレーション定数 ----------
+   標準刺激＋比較刺激ペア全体が、観察距離 60 cm で視角 5° になるように刺激を描画する。
+   実際のサイズは画面の物理 dpi に依存するため、開始前にカード較正で px/cm を取得する。 */
+const VIEWING_DISTANCE_CM = 50;
+const TARGET_PAIR_DEG     = 5;
+const CARD_WIDTH_CM       = 8.56;   // ISO/IEC 7810 ID-1（クレジットカード等）
+const CARD_HEIGHT_CM      = 5.398;
+const DEFAULT_PX_PER_CM   = 96 / 2.54; // ≒37.795（CSS 標準 96 dpi 仮定）
+
+// 比率: 文字ボックス幅 : gap : 文字ボックス幅 = 11 : 8 : 11（合計 30）。
+// 文字 font-size : 文字ボックス幅 = 9 : 11。
+function applyStimSizeFromPxPerCm(pxPerCm) {
+  const targetCm = 2 * VIEWING_DISTANCE_CM
+                   * Math.tan((TARGET_PAIR_DEG / 2) * Math.PI / 180);
+  const totalPx = targetCm * pxPerCm;
+  const charPx  = totalPx * 11 / 30;
+  const gapPx   = totalPx * 8  / 30;
+  const fontPx  = charPx  * 9  / 11;
+  document.documentElement.style.setProperty('--stim-char-size', charPx.toFixed(2) + 'px');
+  document.documentElement.style.setProperty('--stim-gap',       gapPx.toFixed(2)  + 'px');
+  document.documentElement.style.setProperty('--stim-font',      fontPx.toFixed(2) + 'px');
+  return { totalPx, charPx, gapPx, fontPx, targetCm };
+}
+// 起動時はデフォルト dpi で初期化
+applyStimSizeFromPxPerCm(DEFAULT_PX_PER_CM);
+
+/* ---------- 刺激描画 ----------
+   画像は使わず、ひらがなを CSS transform で回転・鏡映する。
+   transform の合成は「右から（要素ローカル座標で）順に」適用されるため、
+   "rotate(angle) scaleX(-1)" は「先に左右反転 → その後回転」となり、
+   心的回転課題で標準的な「直立した文字を反転 → 任意角度に回転」と一致する。 */
+function stimMarkup(char, angle, mirror) {
+  const tf = mirror
+    ? `rotate(${angle}deg) scaleX(-1)`
+    : `rotate(${angle}deg)`;
+  return `<div class="stim-char" style="transform:${tf};">${char}</div>`;
+}
+
+/* ---------- 試行条件の生成 ---------- */
+function buildConditions(chars) {
+  const conds = [];
+  for (const c of chars) {
+    for (const a of ANGLES) {
+      for (const mirror of [false, true]) {
+        conds.push({ char: c, angle: a, mirror: mirror });
+      }
+    }
+  }
+  return jsPsych.randomization.shuffle(conds);
+}
+
+/* ---------- 反応キー設定 ----------
+   左手 = f = 鏡映像、右手 = j = 同一像
+   （design.md の左Shift/右Shiftの手の対応をそのまま f / j に置き換え） */
+const KEY_MIRROR = 'f';
+const KEY_SAME   = 'j';
+
+function makeStimTrial(condition, blockType) {
+  const correctKey = condition.mirror ? KEY_MIRROR : KEY_SAME;
+  return {
+    type: jsPsychHtmlKeyboardResponse,
+    stimulus: function() {
+      const std = stimMarkup(condition.char, 0, false);
+      const cmp = stimMarkup(condition.char, condition.angle, condition.mirror);
+      return `<div class="stim-pair">${std}${cmp}</div>`;
+    },
+    choices: [KEY_MIRROR, KEY_SAME],
+    trial_duration: STIM_DURATION,
+    response_ends_trial: true,
+    data: {
+      task: 'mr',
+      block: blockType,
+      char: condition.char,
+      angle: condition.angle,
+      mirror: condition.mirror,
+      correct_response: condition.mirror ? 'mirror' : 'same',
+      correct_key: correctKey
+    },
+    on_finish: function(data) {
+      if (data.response === null || data.response === undefined) {
+        data.response = null;
+        data.response_label = null;
+        data.rt = null;
+        data.correct = false;
+        data.timeout = true;
+      } else {
+        const key = String(data.response).toLowerCase();
+        data.response = key;
+        data.response_label = (key === KEY_MIRROR) ? 'mirror'
+                            : (key === KEY_SAME)   ? 'same'
+                            : 'unknown';
+        data.correct = (key === data.correct_key);
+        data.timeout = false;
+      }
+    }
+  };
+}
+
+const fixation = {
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: '<div class="fixation">+</div>',
+  choices: "NO_KEYS",
+  trial_duration: FIX_DURATION,
+  data: { task: 'fixation' }
+};
+
+const postBlank = {
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: '',
+  choices: "NO_KEYS",
+  trial_duration: POST_BLANK,
+  data: { task: 'iti' }
+};
+
+/* ---------- 参加者ID入力 ---------- */
+const idInputTrial = {
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: `
+    <div class="instructions" style="text-align:center;">
+      <h2>ひらがなの心的回転</h2>
+      <p>学生番号を入力してください。</p>
+      <input type="text" id="participant-id-input"
+             style="font-size:24px; padding:8px 16px; width:300px;
+                    background:#111; color:#fff; border:1px solid #666;
+                    border-radius:4px; text-align:center;"
+             placeholder="IDを入力">
+      <p style="margin-top:16px; color:#bbb; font-size:14px;">
+        <kbd>Enter</kbd> で確定
+      </p>
+    </div>`,
+  choices: "NO_KEYS",
+  on_load: function() {
+    const input = document.getElementById('participant-id-input');
+    input.focus();
+    const handler = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (input.value.trim() === '') return;
+        participantId = input.value.trim();
+        jsPsych.data.addProperties({ participant_id: participantId });
+        document.removeEventListener('keydown', handler, true);
+        jsPsych.finishTrial();
+      }
+    };
+    document.addEventListener('keydown', handler, true);
+  },
+  on_finish: function(data) {
+    data.task = 'id_input';
+  }
+};
+
+/* ---------- 全画面切替 ---------- */
+const enterFullscreen = {
+  type: jsPsychFullscreen,
+  fullscreen_mode: true,
+  on_load: function() {
+    const handler = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.removeEventListener('keydown', handler, true);
+        document.querySelector('.jspsych-btn').click();
+      }
+    };
+    document.addEventListener('keydown', handler, true);
+  },
+  on_finish: function() {
+    document.body.style.cursor = 'none';
+  },
+  message: `
+    <div class="instructions" style="text-align:center;">
+      <h2>全画面モード</h2>
+      <p>実験は全画面モードで実施します。</p>
+      <p>下のボタンをクリックするか、<kbd>Enter</kbd> キーを押すと全画面表示に切り替わります。</p>
+      <p style="font-size:14px; color:#888; margin-top:24px;">
+        実験中は <kbd>Esc</kbd> キーや別ウィンドウへの切り替えを行わないでください。<br>
+        全画面が解除されると、ブラウザによっては実験が中断される場合があります。
+      </p>
+    </div>`,
+  button_label: '全画面で開始'
+};
+
+const exitFullscreen = {
+  type: jsPsychFullscreen,
+  fullscreen_mode: false,
+  delay_after: 0
+};
+
+/* ---------- 画面較正 ----------
+   ISO 規格カード (85.6 × 53.98 mm) を画面に当て、白枠の幅を実物に合わせる。
+   矢印キーで横幅を伸縮（縦は自動でアスペクト比維持）、Enter で確定。
+   S を押すと較正をスキップして 96 dpi 仮定で続行。 */
+const calibration = {
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: `
+    <div class="instructions">
+      <h2 style="text-align:center;">画面較正</h2>
+      <p>刺激を実寸どおり呈示するため、画面の較正を行います。</p>
+      <p>学生証／キャッシュカード／運転免許証／マイナンバーカードなど、
+         <b>ISO 規格 (85.6 × 54 mm)</b> のカードを画面に当ててください。</p>
+      <p>下の白い枠の <b>外側のふち</b> が<b>カード</b> と一致するように、矢印キーで調整してください
+         （線の <b>内側</b> ではなく <b>外側</b> を合わせます）。</p>
+      <div id="calib-card" style="width: 320px; height: 202px;">
+        枠の外側のふちをカードに合わせる
+      </div>
+      <p style="font-size:14px; color:#bbb; text-align:center;">
+        操作：
+        <kbd>←</kbd> <kbd>→</kbd> 1 px /
+        <kbd>Shift</kbd>+<kbd>←</kbd> <kbd>→</kbd> 10 px /
+        <kbd>Enter</kbd> 確定 /
+        <kbd>S</kbd> スキップ
+      </p>
+      <p id="calib-readout" style="font-size:14px; color:#888; text-align:center;">
+        現在の枠幅: 320 px
+      </p>
+    </div>`,
+  choices: "NO_KEYS",
+  on_load: function() {
+    const card = document.getElementById('calib-card');
+    const readout = document.getElementById('calib-readout');
+    const aspect = CARD_HEIGHT_CM / CARD_WIDTH_CM;
+    let widthPx = 320; // 96 dpi での想定値（≒8.46 cm）
+    const update = () => {
+      card.style.width  = widthPx + 'px';
+      card.style.height = (widthPx * aspect).toFixed(2) + 'px';
+      readout.textContent = `現在の枠幅: ${widthPx} px`;
+    };
+    update();
+    const handler = (e) => {
+      const step = e.shiftKey ? 10 : 1;
+      if (e.key === 'ArrowRight') {
+        widthPx += step; e.preventDefault(); update();
+      } else if (e.key === 'ArrowLeft') {
+        widthPx = Math.max(40, widthPx - step); e.preventDefault(); update();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        document.removeEventListener('keydown', handler, true);
+        const pxPerCm = widthPx / CARD_WIDTH_CM;
+        jsPsych.finishTrial({
+          calibration: 'matched',
+          card_width_px: widthPx,
+          px_per_cm: pxPerCm
+        });
+      } else if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        document.removeEventListener('keydown', handler, true);
+        jsPsych.finishTrial({
+          calibration: 'skipped',
+          card_width_px: null,
+          px_per_cm: DEFAULT_PX_PER_CM
+        });
+      }
+    };
+    document.addEventListener('keydown', handler, true);
+  },
+  on_finish: function(data) {
+    data.task = 'calibration';
+    data.viewing_distance_cm = VIEWING_DISTANCE_CM;
+    data.target_pair_deg = TARGET_PAIR_DEG;
+    const sizes = applyStimSizeFromPxPerCm(data.px_per_cm);
+    data.stim_pair_total_cm = +sizes.targetCm.toFixed(3);
+    data.stim_pair_total_px = +sizes.totalPx.toFixed(2);
+    data.stim_char_px       = +sizes.charPx.toFixed(2);
+    data.stim_gap_px        = +sizes.gapPx.toFixed(2);
+    data.stim_font_px       = +sizes.fontPx.toFixed(2);
+    // 全試行データに px/cm を付与
+    jsPsych.data.addProperties({
+      px_per_cm: +data.px_per_cm.toFixed(4),
+      viewing_distance_cm: VIEWING_DISTANCE_CM,
+      target_pair_deg: TARGET_PAIR_DEG
+    });
+  }
+};
+
+const instructions = {
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: `
+    <div class="instructions">
+      <h2>ひらがなの心的回転</h2>
+      <p>この実験では、画面の中央に左右に並んだ <b>2 つのひらがな</b> が呈示されます。</p>
+      <p>左側が <b>標準刺激</b>、右側が <b>比較刺激</b> です。比較刺激は様々な角度に回転しています。</p>
+      <p>2 つの文字を比較し、できるだけ <b>速く正確に</b> 反応してください：</p>
+      <ul>
+        <li>同一像（同じ文字を回転させたもの）なら → <kbd>J</kbd> キー（右手の人差し指）</li>
+        <li>鏡映像（鏡写しの文字）なら → <kbd>F</kbd> キー（左手の人差し指）</li>
+      </ul>
+      <p>各試行の制限時間は <b>2 秒</b> です。2 秒以内にキーを押してください。</p>
+      <p>最初に <b>練習を 12 試行</b> 行った後、本実験 (120 試行) に進みます。</p>
+      <p class="center-msg">準備ができたら <kbd>Space</kbd> キーを押してください</p>
+    </div>`,
+  choices: [' ']
+};
+
+/* ---------- キー動作チェック ----------
+   F と J の両方が押せることを確認する。両方を 1 回ずつ押すと次へ進める。 */
+const keyCheck = {
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: `
+    <div class="instructions">
+      <h2>キー動作チェック</h2>
+      <p>本実験を始める前に、反応キー <kbd>F</kbd> と <kbd>J</kbd> が正しく検出できるか確認します。</p>
+      <p>左手の人差し指で <kbd>F</kbd> キーを、右手の人差し指で <kbd>J</kbd> キーを 1 回ずつ押してください。</p>
+      <div id="keycheck-status" style="margin-top:24px; text-align:center; font-size:24px;">
+        <div id="kc-f">F（左手・鏡映像）： <span style="color:#f55;">未検出</span></div>
+        <div id="kc-j" style="margin-top:8px;">J（右手・同一像）： <span style="color:#f55;">未検出</span></div>
+      </div>
+      <p class="center-msg" id="kc-msg">両方を押すと自動的に次へ進みます</p>
+      <p class="center-msg" style="font-size:14px; color:#888;">
+        反応しない場合は IME（日本語入力）が ON になっていないか確認してください。
+      </p>
+    </div>`,
+  choices: [KEY_MIRROR, KEY_SAME],
+  response_ends_trial: false,
+  on_load: function() {
+    const status = { f: false, j: false };
+    const elF = document.getElementById('kc-f');
+    const elJ = document.getElementById('kc-j');
+    const elMsg = document.getElementById('kc-msg');
+    const handler = function(e) {
+      const k = (e.key || '').toLowerCase();
+      if (k !== KEY_MIRROR && k !== KEY_SAME) return;
+      e.preventDefault();
+      status[k] = true;
+      const ok = '<span style="color:#5f5;">検出 OK</span>';
+      if (status.f) elF.innerHTML = 'F（左手・鏡映像）： ' + ok;
+      if (status.j) elJ.innerHTML = 'J（右手・同一像）： ' + ok;
+      if (status.f && status.j) {
+        elMsg.innerHTML = '<span style="color:#5f5;">両方検出されました。1 秒後に次へ進みます…</span>';
+        document.removeEventListener('keydown', handler, true);
+        setTimeout(() => jsPsych.finishTrial({ keycheck: 'ok' }), 1000);
+      }
+    };
+    document.addEventListener('keydown', handler, true);
+    this._handler = handler;
+  },
+  on_finish: function(data) {
+    data.task = 'keycheck';
+  }
+};
+
+const practiceStart = {
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: `
+    <div class="instructions">
+      <h2>練習</h2>
+      <p>これから練習試行を 12 回行います（フィードバックはありません）。</p>
+      <p>キーの位置を確認してください：</p>
+      <ul>
+        <li><kbd>J</kbd>（右手の人差し指）= 同一像</li>
+        <li><kbd>F</kbd>（左手の人差し指）= 鏡映像</li>
+      </ul>
+      <p class="center-msg"><kbd>Space</kbd> キーで開始</p>
+    </div>`,
+  choices: [' ']
+};
+
+const mainStart = {
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: `
+    <div class="instructions">
+      <h2>本実験</h2>
+      <p>練習が終了しました。</p>
+      <p>これから本実験 (120 試行) を始めます。</p>
+      <p>休憩したい場合はこの画面でゆっくり休んでください。</p>
+      <p class="center-msg">準備ができたら <kbd>Space</kbd> キーを押してください</p>
+    </div>`,
+  choices: [' ']
+};
+
+const debrief = {
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: function() {
+    const main   = jsPsych.data.get().filter({ task: 'mr', block: 'main' });
+    const total  = main.count();
+    const correct = main.filter({ correct: true });
+    const acc    = total > 0 ? Math.round((correct.count() / total) * 100) : 0;
+    const meanRT = correct.count() > 0 ? Math.round(correct.select('rt').mean()) : NaN;
+    return `
+      <div class="instructions">
+        <h2>実験終了</h2>
+        <p>お疲れさまでした。これで実験はすべて終了です。</p>
+        <p><b>正答率：</b> ${acc}% （${correct.count()} / ${total}）</p>
+        <p><b>平均反応時間（正答試行）：</b> ${isNaN(meanRT) ? '—' : meanRT + ' ms'}</p>
+        <p>結果データ (CSV) は次の画面に進むと自動的にダウンロードされます。</p>
+        <p class="center-msg"><kbd>Space</kbd> キーで終了</p>
+      </div>`;
+  },
+  choices: [' ']
+};
+
+/* ---------- データ保存 ---------- */
+/* 列順を明示した CSV ビルダー。
+   実験本体の列を先頭、jsPsych 標準列を中間、較正関連の列を末尾にまとめる。 */
+const CSV_COLS_EXPERIMENT = [
+  'participant_id', 'trial_index', 'task', 'block',
+  'char', 'angle', 'mirror',
+  'correct_response', 'correct_key',
+  'response', 'response_label',
+  'rt', 'correct', 'timeout'
+];
+const CSV_COLS_CALIBRATION = [
+  'viewing_distance_cm', 'target_pair_deg',
+  'px_per_cm', 'calibration', 'card_width_px',
+  'stim_pair_total_cm', 'stim_pair_total_px',
+  'stim_char_px', 'stim_gap_px', 'stim_font_px'
+];
+
+function buildOrderedCSV(rows) {
+  const front = new Set(CSV_COLS_EXPERIMENT);
+  const back  = new Set(CSV_COLS_CALIBRATION);
+  // 中間列: 実データに現れた、上記いずれにも含まれないキー（jsPsych 標準など）
+  const middle = [];
+  for (const r of rows) {
+    for (const k of Object.keys(r)) {
+      if (!front.has(k) && !back.has(k) && !middle.includes(k)) {
+        middle.push(k);
+      }
+    }
+  }
+  const cols = [...CSV_COLS_EXPERIMENT, ...middle, ...CSV_COLS_CALIBRATION];
+  const esc = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lines = [cols.join(',')];
+  for (const r of rows) {
+    lines.push(cols.map(c => esc(r[c])).join(','));
+  }
+  return lines.join('\n');
+}
+
+function saveDataAsCSV() {
+  // 心的回転試行 + 較正情報を保存（fixation/iti/keycheck は除外）
+  const rows = jsPsych.data.get().filter([
+    { task: 'mr' },
+    { task: 'calibration' }
+  ]).values();
+  const csv = buildOrderedCSV(rows);
+  // Excel で開いたときに日本語が文字化けしないよう UTF-8 BOM を付与
+  const BOM = '﻿';
+  const blob = new Blob([BOM, csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const ts = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`
+           + `_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  a.href = url;
+  a.download = `mr_${participantId}_${ts}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ---------- タイムライン ---------- */
+const timeline = [];
+timeline.push(idInputTrial);
+timeline.push(enterFullscreen);
+timeline.push(calibration);
+timeline.push(instructions);
+timeline.push(keyCheck);
+timeline.push(practiceStart);
+
+const practiceConds = buildConditions([PRACTICE_CHAR]);
+for (const c of practiceConds) {
+  timeline.push(fixation);
+  timeline.push(makeStimTrial(c, 'practice'));
+  timeline.push(postBlank);
+}
+
+timeline.push(mainStart);
+
+const mainConds = buildConditions(CHARS);
+for (const c of mainConds) {
+  timeline.push(fixation);
+  timeline.push(makeStimTrial(c, 'main'));
+  timeline.push(postBlank);
+}
+
+timeline.push(debrief);
+timeline.push(exitFullscreen);
+
+jsPsych.run(timeline);
+</script>
+</html>
