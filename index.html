@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>心的回転課題 (Mental Rotation)</title>
+  <title>ひらがなの心的回転(Mental Rotation)</title>
 
   <script src="https://unpkg.com/jspsych@8.0.0"></script>
   <script src="https://unpkg.com/@jspsych/plugin-html-keyboard-response@2.0.0"></script>
@@ -154,7 +154,7 @@ const STIM_DURATION = 2000;
 const POST_BLANK    = 1500; // 試行間 = STIM終了後ブランク(1500) + 次のFixation(500) = 2000ms
 
 /* ---------- 視角設定とキャリブレーション定数 ----------
-   標準刺激＋比較刺激ペア全体が、観察距離 60 cm で視角 5° になるように刺激を描画する。
+   標準刺激＋比較刺激ペア全体が、観察距離 50 cm で視角 5° になるように刺激を描画する。
    実際のサイズは画面の物理 dpi に依存するため、開始前にカード較正で px/cm を取得する。 */
 const VIEWING_DISTANCE_CM = 50;
 const TARGET_PAIR_DEG     = 5;
@@ -206,7 +206,7 @@ function buildConditions(chars) {
 
 /* ---------- 反応キー設定 ----------
    左手 = f = 鏡映像、右手 = j = 同一像
-   （design.md の左Shift/右Shiftの手の対応をそのまま f / j に置き換え） */
+*/
 const KEY_MIRROR = 'f';
 const KEY_SAME   = 'j';
 
@@ -350,7 +350,7 @@ const calibration = {
     <div class="instructions">
       <h2 style="text-align:center;">画面較正</h2>
       <p>刺激を実寸どおり呈示するため、画面の較正を行います。</p>
-      <p>学生証／キャッシュカード／運転免許証／マイナンバーカードなど、
+      <p>学生証／キャッシュカードなど、
          <b>ISO 規格 (85.6 × 54 mm)</b> のカードを画面に当ててください。</p>
       <p>下の白い枠の <b>外側のふち</b> が<b>カード</b> と一致するように、矢印キーで調整してください
          （線の <b>内側</b> ではなく <b>外側</b> を合わせます）。</p>

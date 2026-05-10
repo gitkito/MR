@@ -1,1 +1,1 @@
-# MR
+# Mental Rotation Experiment
